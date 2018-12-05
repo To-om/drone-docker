@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+set -e
+
+help() {
+  cat <<-_EOF_
+  Build and publish docker image
+  Udate: $0 [OPTION...]
+  Arguments:
+    -h, --help          This message
+_EOF_
+  exit 1
+}
+
+die() {
+  echo $* >&2
+  exit 2
+}
+
+IFS=',' read -r -a EXTRA_PARAM <<< $PLUGIN_EXTRA_PARAM
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    *)                 help;                shift 1;;
+  esac
+done
+
+PLUGIN_USERNAME=
+PLUGIN_PASSWORD=
+PLUGIN_REPO=
+PLUGIN_REGISTRY=
+PLUGIN_DOCKERFILE=
+PLUGIN_TAGS=
+PLUGIN_CONTEXT=
+
+ARGS=
+[[ -n "${DRONE_TAG}" ]] && ARGS="${ARGS} --build-arg VERSION=${DRONE_TAG}"
+
+docker build -t ${PLUGIN_REPO} \
+    --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+    --build-arg VCS_REF=${DRONE_COMMIT} \
+    ${ARGS} \
+    -f ${PLUGIN_DOCKERFILE} ${PLUGIN_CONTEXT}
+docker login -u ${PLUGIN_USERNAME} -p ${PLUGIN_PASSWORD}
+docker push ${PLUGIN_REPO}
