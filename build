@@ -7,7 +7,17 @@ help() {
   Build and publish docker image
   Udate: $0 [OPTION...]
   Arguments:
-    -h, --help          This message
+    -u, --user USER             Username used to push Docker image
+    -p, --password PASSWORD     Password used to push Docker image
+    -r, --repo REPOSITORY       Repository of the image
+    -g, --registry REGISTRY     Registry where the image is pushed
+    -d, --dockerfile FILE       Dockerfile
+    -t, --tags TAG              Add tag
+    -a, --auto-tags             Add all intermediate tags
+    -l, --latest                Add "latest" tag
+    -c, --context PATH          Context path for the build
+    -b, --build-arg ARG=VALUE   Add a build argument
+    -h, --help                  This message
 _EOF_
   exit 1
 }
@@ -17,29 +27,56 @@ die() {
   exit 2
 }
 
-IFS=',' read -r -a EXTRA_PARAM <<< $PLUGIN_EXTRA_PARAM
+IFS=',' read -r -a BUILD_ARGS <<< ${PLUGIN_BUILD_ARGS}
+[[ -z "${PLUGIN_TAGS}" ]] && PLUGIN_TAGS=${DRONE_TAG}
+IFS=',' read -r -a TAGS <<< $PLUGIN_TAGS
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    *)                 help;                shift 1;;
+    -u|--user)          PLUGIN_USERNAME=$2;     shift 2;;
+    -p|--password)      PLUGIN_PASSWORD=$2;     shift 2;;
+    -r|--repo)          PLUGIN_REPO=$2;         shift 2;;
+    -g|--registry)      PLUGIN_REGISTRY=$2;     shift 2;;
+    -d|--dockerfile)    PLUGIN_DOCKERFILE=$2;   shift 2;;
+    -t|--tags)          TAGS+=($2);             shift 2;;
+    -a|--auto-tags)     PLUGIN_AUTOTAG=true;    shift 1;;
+    -l|--latest)        TAGS+=(latest);         shift 1;;
+    -c|--context)       PLUGIN_CONTEXT=$2;      shift 2;;
+    -b|--build-arg)     BUILD_ARGS+=($2);       shift 2;;
+    -h)                 help;                   shift 1;;
+    *)                  die bad option: $1;     shift 1;;
   esac
 done
 
-PLUGIN_USERNAME=
-PLUGIN_PASSWORD=
-PLUGIN_REPO=
-PLUGIN_REGISTRY=
-PLUGIN_DOCKERFILE=
-PLUGIN_TAGS=
-PLUGIN_CONTEXT=
+if [[ "${PLUGIN_AUTOTAG}" == true ]]; then
+    FULL_TAGS=()
+    for TAG in ${TAGS[@]}; do
+        while [[ -n "${TAG}" ]]; do
+            FULL_TAGS+=(${TAG})
+            T=${TAG%.*}
+            [[ "${TAG}" == "${T}" ]] && TAG='' || TAG="${T}"
+        done
+    done
+    TAGS=(${FULL_TAGS[@]})
+fi
 
-ARGS=
-[[ -n "${DRONE_TAG}" ]] && ARGS="${ARGS} --build-arg VERSION=${DRONE_TAG}"
+TAGS=($(echo "${TAGS[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
+
+ARGS=""
+for A in ${BUILD_ARGS[@]}; do
+    ARGS="${ARGS} --build-arg ${A}"
+done
 
 docker build -t ${PLUGIN_REPO} \
-    --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
-    --build-arg VCS_REF=${DRONE_COMMIT} \
     ${ARGS} \
     -f ${PLUGIN_DOCKERFILE} ${PLUGIN_CONTEXT}
-docker login -u ${PLUGIN_USERNAME} -p ${PLUGIN_PASSWORD}
-docker push ${PLUGIN_REPO}
+
+if [[ -n "${PLUGIN_USERNAME}" &&  -n "${PLUGIN_PASSWORD}" ]]; then
+    docker login -u ${PLUGIN_USERNAME} -p ${PLUGIN_PASSWORD}
+    for TAG in ${TAGS[@]}; do
+        docker tag ${PLUGIN_REPO} ${PLUGIN_REPO}:${TAG}
+        docker push ${PLUGIN_REPO}:${TAG}
+    done
+else
+    echo No credential provided, Docker image is not published.
+fi
